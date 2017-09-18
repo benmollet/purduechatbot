@@ -3,9 +3,12 @@ using System.Threading.Tasks;
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Connector;
 using System.Text.RegularExpressions;
-using System.Net.Http;
-using System.Runtime.Serialization;
 using System.Collections.Generic;
+using System.Xml;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Formatting;
+using System.Runtime.Serialization;
 
 namespace Purdue_Chat_Bot.Dialogs
 {
@@ -23,42 +26,61 @@ namespace Purdue_Chat_Bot.Dialogs
         {
             var activity = await result as Activity;
 
-            var diningCourtMatch = Regex.Match(activity.Text, "dining court ([a-zA-Z]*)");
-
-            if (diningCourtMatch.Success)
+            var readInDiningCourt = Regex.Match(activity.Text, @"dining court ([a-zA-Z]*)");
+            var knownDiningCourts = new List<string>()
             {
-                using (var client = new HttpClient())
-                {
-                    var response = await client.GetAsync($"https://api.hfs.purdue.edu/menus/v1/locations/{diningCourtMatch.Groups[1]?.Value}/09-16-2017");
-                    var content = await response.Content.ReadAsAsync<Menu>();
+                "Earhart"
+            };
 
-                    var responseText = string.Empty;
-                    responseText += "For lunch there is:<br>";
-
-                    foreach(var section in content.Lunch)
-                    {
-                        responseText += $"On the {section.Name} there is:<br>";
-
-                        foreach(var item in section.Items)
-                        {
-                            responseText += $"{item.Name}";
-                        }
-                    }
-
-                    await context.PostAsync(responseText);
-                }
+            if (!readInDiningCourt.Success)
+            {
+                await context.PostAsync("I'm sorry I don't know what you're asking me");
+            }
+            else if (!knownDiningCourts.Contains(readInDiningCourt.Groups[1].Value))
+            {
+                await context.PostAsync($"I'm sorry I don't know a dining court named {readInDiningCourt.Groups[1].Value}");
             }
             else
             {
-                await context.PostAsync($"I don't recognize that.");
+                using (var client = new HttpClient())
+                {
+                    var response = await client.GetAsync("https://api.hfs.purdue.edu/menus/v1/locations/Earhart/09-15-2017");
+                    var menu = await response.Content.ReadAsAsync<Menu>();
+
+                    var textResponse = $"For Breakfast there is:<br><hr>{this.ReadMeal(menu.Breakfast)}<br>";
+                    textResponse += $"For Lunch there is:<br><hr>{this.ReadMeal(menu.Lunch)}<br>";
+                    textResponse += $"For Dinner there is:<br><hr>{this.ReadMeal(menu.Dinner)}";
+
+                    await context.PostAsync(textResponse);
+                }
             }
 
+            // return our reply to the user
             context.Wait(MessageReceivedAsync);
+        }
+
+        public string ReadMeal(IList<MenuSection> menuSections)
+        {
+            var textResponse = string.Empty;
+
+            foreach (var menuSection in menuSections)
+            {
+                textResponse += $"On the {menuSection.Name} there is:<br><ul>";
+
+                foreach (var menuItem in menuSection.Items)
+                {
+                    textResponse += $"<li>{menuItem.Name}</li><br>";
+                }
+
+                textResponse += "</ul>";
+            }
+
+            return textResponse;
         }
     }
 
     [DataContract]
-    public class Lunch
+    public class MenuSection
     {
 
         [DataMember(Name = "Name")]
@@ -80,27 +102,16 @@ namespace Purdue_Chat_Bot.Dialogs
     }
 
     [DataContract]
-    public class Dinner
-    {
-
-        [DataMember(Name = "Name")]
-        public string Name { get; set; }
-
-        [DataMember(Name = "Items")]
-        public IList<Item> Items { get; set; }
-    }
-
-    [DataContract]
     public class Menu
     {
 
         [DataMember(Name = "Breakfast")]
-        public IList<object> Breakfast { get; set; }
+        public IList<MenuSection> Breakfast { get; set; }
 
         [DataMember(Name = "Lunch")]
-        public IList<Lunch> Lunch { get; set; }
+        public IList<MenuSection> Lunch { get; set; }
 
         [DataMember(Name = "Dinner")]
-        public IList<Dinner> Dinner { get; set; }
+        public IList<MenuSection> Dinner { get; set; }
     }
 }
